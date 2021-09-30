@@ -6,6 +6,26 @@ import (
 	"gorgonia.org/tensor"
 )
 
+func TestArgsort3D(t *testing.T) {
+	backing := []float64{0, 1, 2, 3, 4, 5, 6, 7}
+	in := tensor.NewDense(
+		tensor.Float64,
+		[]int{2, 4},
+		tensor.WithBacking(backing),
+	)
+	out := tensor.NewDense(
+		tensor.Int,
+		[]int{2, 4},
+		tensor.WithBacking([]int{0, 0, 0, 0, 1, 1, 1, 1}),
+	)
+
+	sortedInd := Argsort(in, 0)
+
+	if !sortedInd.Eq(out) {
+		t.Errorf("expected \n%v \n\nreceived \n%v", out, sortedInd)
+	}
+}
+
 func TestArgsort(t *testing.T) {
 	// float64 Argsort
 	backing := []float64{1, 5, 0, 3, 9, 8, 4, 6, 7}
@@ -23,7 +43,7 @@ func TestArgsort(t *testing.T) {
 	sortedInd := Argsort(in, 1)
 
 	if !sortedInd.Eq(out) {
-		t.Error("invalid sort")
+		t.Errorf("expected \n%v \n\nreceived \n%v", out, sortedInd)
 	}
 
 	// float32 Argsort
@@ -42,7 +62,7 @@ func TestArgsort(t *testing.T) {
 	f32SortedInd := Argsort(f32In, 1)
 
 	if !f32SortedInd.Eq(f32Out) {
-		t.Error("invalid sort")
+		t.Errorf("expected \n%v \n\nreceived \n%v", f32Out, f32SortedInd)
 	}
 
 	// int Argsort

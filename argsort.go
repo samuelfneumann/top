@@ -97,7 +97,7 @@ func Argsort(t tensor.Tensor, axis int) tensor.Tensor {
 	// the argsort'd tensor
 	sortedArgsChan := make(chan []int)
 	indChan := make(chan []int)
-	for i := 0; i < dimSize; i++ {
+	for i := 0; i < outer*inner; i++ {
 		row := i // Since i may change before the goroutine needs it
 		go sortRow(data, indChan, sortedArgsChan, row, outer, oStride,
 			dimSize, dimStride)
@@ -105,7 +105,7 @@ func Argsort(t tensor.Tensor, axis int) tensor.Tensor {
 
 	// Set each row based on the concurrent argsorts
 	sorted := make([]int, dataLen) // Backing for argsort'd tensor
-	for k := 0; k < dimSize; k++ {
+	for k := 0; k < inner*outer; k++ {
 		indices := <-indChan     // Indices to set in the backing slice
 		args := <-sortedArgsChan // Sorted indices of the input slice
 
