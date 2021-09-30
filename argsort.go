@@ -6,7 +6,21 @@ import (
 	"gorgonia.org/tensor"
 )
 
-// TODO: concurrently sort each block
+type intSlice []int
+
+func (f intSlice) Len() int { return len(f) }
+
+func (f intSlice) Less(i, j int) bool { return f[i] < f[j] }
+
+func (f intSlice) Swap(i, j int) { f[i], f[j] = f[j], f[i] }
+
+type f32Slice []float32
+
+func (f f32Slice) Len() int { return len(f) }
+
+func (f f32Slice) Less(i, j int) bool { return f[i] < f[j] }
+
+func (f f32Slice) Swap(i, j int) { f[i], f[j] = f[j], f[i] }
 
 type f64Slice []float64
 
@@ -85,19 +99,8 @@ func Argsort(t tensor.Tensor, axis int) tensor.Tensor {
 	indChan := make(chan []int)
 	for i := 0; i < dimSize; i++ {
 		row := i // Since i may change before the goroutine needs it
-		go func() {
-			currentRow := make([]float64, 0, dimSize)
-			indices := make([]int, 0, dimSize)
-			for j := row * outer; j < row*outer+oStride; j += dimStride {
-				currentRow = append(currentRow, data[j])
-				indices = append(indices, j)
-			}
-
-			args := argSort(f64Slice(currentRow))
-
-			indChan <- indices
-			sortedArgsChan <- args
-		}()
+		go sortRow(data, indChan, sortedArgsChan, row, outer, oStride,
+			dimSize, dimStride)
 	}
 
 	// Set each row based on the concurrent argsorts
@@ -118,4 +121,66 @@ func Argsort(t tensor.Tensor, axis int) tensor.Tensor {
 		tensor.WithBacking(sorted),
 	)
 	return indices
+}
+
+func sortRow(data interface{}, indChan, sortedArgsChan chan []int, row,
+	outer, oStride, dimSize, dimStride int) {
+	switch d := data.(type) {
+	case []float64:
+		f64SortRow(d, indChan, sortedArgsChan, row, outer, oStride,
+			dimSize, dimStride)
+
+	case []float32:
+		f32SortRow(d, indChan, sortedArgsChan, row, outer, oStride,
+			dimSize, dimStride)
+
+	case []int:
+		intSortRow(d, indChan, sortedArgsChan, row, outer, oStride,
+			dimSize, dimStride)
+	}
+}
+
+func f64SortRow(data []float64, indChan, sortedArgsChan chan []int, row,
+	outer, oStride, dimSize, dimStride int) {
+	currentRow := make([]float64, 0, dimSize)
+	indices := make([]int, 0, dimSize)
+	for j := row * outer; j < row*outer+oStride; j += dimStride {
+		currentRow = append(currentRow, data[j])
+		indices = append(indices, j)
+	}
+
+	args := argSort(f64Slice(currentRow))
+
+	indChan <- indices
+	sortedArgsChan <- args
+}
+
+func f32SortRow(data []float32, indChan, sortedArgsChan chan []int, row,
+	outer, oStride, dimSize, dimStride int) {
+	currentRow := make([]float32, 0, dimSize)
+	indices := make([]int, 0, dimSize)
+	for j := row * outer; j < row*outer+oStride; j += dimStride {
+		currentRow = append(currentRow, data[j])
+		indices = append(indices, j)
+	}
+
+	args := argSort(f32Slice(currentRow))
+
+	indChan <- indices
+	sortedArgsChan <- args
+}
+
+func intSortRow(data []int, indChan, sortedArgsChan chan []int, row,
+	outer, oStride, dimSize, dimStride int) {
+	currentRow := make([]int, 0, dimSize)
+	indices := make([]int, 0, dimSize)
+	for j := row * outer; j < row*outer+oStride; j += dimStride {
+		currentRow = append(currentRow, data[j])
+		indices = append(indices, j)
+	}
+
+	args := argSort(intSlice(currentRow))
+
+	indChan <- indices
+	sortedArgsChan <- args
 }
