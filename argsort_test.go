@@ -10,12 +10,12 @@ func TestArgsort3D(t *testing.T) {
 	backing := []float64{0, 1, 2, 3, 4, 5, 6, 7}
 	in := tensor.NewDense(
 		tensor.Float64,
-		[]int{2, 4},
+		[]int{2, 2, 2},
 		tensor.WithBacking(backing),
 	)
 	out := tensor.NewDense(
 		tensor.Int,
-		[]int{2, 4},
+		[]int{2, 2, 2},
 		tensor.WithBacking([]int{0, 0, 0, 0, 1, 1, 1, 1}),
 	)
 
@@ -69,12 +69,14 @@ func TestArgsort(t *testing.T) {
 	intBacking := [][]int{
 		{1, 5, 0, 3, 9, 8, 4, 6, 7},
 		{1, 5, 0, 3, 9, 8, 4, 6, 7},
+		{0, 1, 2, 3, 4, 5, 6, 7},
 	}
 	shapes := [][]int{
 		{3, 3},
 		{3, 3},
+		{2, 4},
 	}
-	axis := []int{1, 0}
+	axis := []int{1, 0, 0}
 	intOut := []*tensor.Dense{
 		tensor.NewDense(
 			tensor.Int,
@@ -85,6 +87,11 @@ func TestArgsort(t *testing.T) {
 			tensor.Int,
 			shapes[1],
 			tensor.WithBacking([]int{0, 0, 0, 1, 2, 2, 2, 1, 1}),
+		),
+		tensor.NewDense(
+			tensor.Int,
+			shapes[2],
+			tensor.WithBacking([]int{0, 0, 0, 0, 1, 1, 1, 1}),
 		),
 	}
 
