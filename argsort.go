@@ -89,7 +89,7 @@ func Argsort(t tensor.Tensor, axis int) tensor.Tensor {
 	oStride := dimSize * dimStride
 
 	dataLen := shape.TotalSize()
-	data := t.Data().([]float64)
+	data := t.Data()
 
 	// Sort each row concurrently passing back a slice of indices that
 	// would sort the input tensor along the row, along with the indices
