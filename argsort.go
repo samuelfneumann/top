@@ -1,71 +1,15 @@
 package top
 
 import (
+	"fmt"
 	"sort"
 
 	"gorgonia.org/tensor"
 )
 
-type intSlice []int
-
-func (f intSlice) Len() int { return len(f) }
-
-func (f intSlice) Less(i, j int) bool { return f[i] < f[j] }
-
-func (f intSlice) Swap(i, j int) { f[i], f[j] = f[j], f[i] }
-
-type f32Slice []float32
-
-func (f f32Slice) Len() int { return len(f) }
-
-func (f f32Slice) Less(i, j int) bool { return f[i] < f[j] }
-
-func (f f32Slice) Swap(i, j int) { f[i], f[j] = f[j], f[i] }
-
-type f64Slice []float64
-
-func (f f64Slice) Len() int { return len(f) }
-
-func (f f64Slice) Less(i, j int) bool { return f[i] < f[j] }
-
-func (f f64Slice) Swap(i, j int) { f[i], f[j] = f[j], f[i] }
-
-type argSorter struct {
-	s   sort.Interface
-	ind []int
-}
-
-func newArgSorter(s sort.Interface) *argSorter {
-	indices := make([]int, s.Len())
-	for i := 0; i < s.Len(); i++ {
-		indices[i] = i
-	}
-
-	return &argSorter{
-		s:   s,
-		ind: indices,
-	}
-}
-
-func (a *argSorter) Less(i, j int) bool {
-	return a.s.Less(a.ind[i], a.ind[j])
-}
-
-func (a *argSorter) Len() int { return a.s.Len() }
-
-func (a *argSorter) Swap(i, j int) {
-	a.ind[i], a.ind[j] = a.ind[j], a.ind[i]
-}
-
-func argSort(s sort.Interface) []int {
-	a := newArgSorter(s)
-	sort.Stable(a)
-
-	return a.ind
-}
-
-func Argsort(t tensor.Tensor, axis int) tensor.Tensor {
-
+// Argsort returns an int tensor containing indices that would sort
+// t along axis.
+func Argsort(t tensor.Tensor, axis int) (tensor.Tensor, error) {
 	shape := t.Shape()
 	dimSize := shape[axis]
 
@@ -95,12 +39,13 @@ func Argsort(t tensor.Tensor, axis int) tensor.Tensor {
 	// would sort the input tensor along the row, along with the indices
 	// at which these values should be set for the backing data of
 	// the argsort'd tensor
-	sortedArgsChan := make(chan []int)
-	indChan := make(chan []int)
+	sortedArgsChan := make(chan []int, outer*inner)
+	indChan := make(chan []int, outer*inner)
+	errors := make(chan error, outer*inner)
 	for i := 0; i < outer*inner; i++ {
 		row := i // Since i may change before the goroutine needs it
 		go sortRow(data, indChan, sortedArgsChan, row, outer, oStride,
-			dimSize, dimStride)
+			dimSize, dimStride, errors)
 	}
 
 	// Set each row based on the concurrent argsorts
@@ -108,11 +53,18 @@ func Argsort(t tensor.Tensor, axis int) tensor.Tensor {
 	for k := 0; k < inner*outer; k++ {
 		indices := <-indChan     // Indices to set in the backing slice
 		args := <-sortedArgsChan // Sorted indices of the input slice
+		err := <-errors          // Errors during sorting
+		if err != nil {
+			return nil, fmt.Errorf("argsort: %v", err)
+		}
 
 		for i := 0; i < len(indices); i++ {
 			sorted[indices[i]] = args[i]
 		}
 	}
+	close(indChan)
+	close(sortedArgsChan)
+	close(errors)
 
 	// Construct and returns the argsort'd tensor
 	indices := tensor.NewDense(
@@ -120,11 +72,55 @@ func Argsort(t tensor.Tensor, axis int) tensor.Tensor {
 		shape,
 		tensor.WithBacking(sorted),
 	)
-	return indices
+	return indices, nil
 }
 
+// argSorter argsorts a slice
+type argSorter struct {
+	s   sort.Interface
+	ind []int
+}
+
+// newArgSorter returns a new argSorter
+func newArgSorter(s sort.Interface) *argSorter {
+	indices := make([]int, s.Len())
+	for i := 0; i < s.Len(); i++ {
+		indices[i] = i
+	}
+
+	return &argSorter{
+		s:   s,
+		ind: indices,
+	}
+}
+
+// Less implements the interface sort.Interface
+func (a *argSorter) Less(i, j int) bool {
+	return a.s.Less(a.ind[i], a.ind[j])
+}
+
+// Len implements the interface sort.Interface
+func (a *argSorter) Len() int { return a.s.Len() }
+
+// Swap implements the interface sort.Interface
+func (a *argSorter) Swap(i, j int) {
+	a.ind[i], a.ind[j] = a.ind[j], a.ind[i]
+}
+
+// argSort returns the indices that would sort s
+func argSort(s sort.Interface) []int {
+	a := newArgSorter(s)
+	sort.Stable(a)
+
+	return a.ind
+}
+
+// sortRow sorts as specific row of data, sending the indices to update
+// in the backing slice of the argsort'd tensor along indChan, and
+// the arguments that sort the tensor along sortedArgsChan. Any errors
+// during the computation are sent along errors.
 func sortRow(data interface{}, indChan, sortedArgsChan chan []int, row,
-	outer, oStride, dimSize, dimStride int) {
+	outer, oStride, dimSize, dimStride int, errors chan error) {
 	switch d := data.(type) {
 	case []float64:
 		f64SortRow(d, indChan, sortedArgsChan, row, outer, oStride,
@@ -137,9 +133,16 @@ func sortRow(data interface{}, indChan, sortedArgsChan chan []int, row,
 	case []int:
 		intSortRow(d, indChan, sortedArgsChan, row, outer, oStride,
 			dimSize, dimStride)
+
+	default:
+		errors <- fmt.Errorf("sortRow: type %T not supported", data)
 	}
+
+	errors <- nil
 }
 
+// f64SortRow sorts a row of a tensor, where data is the backing slice
+// of the tensor. See sortRow.
 func f64SortRow(data []float64, indChan, sortedArgsChan chan []int, row,
 	outer, oStride, dimSize, dimStride int) {
 	currentRow := make([]float64, 0, dimSize)
@@ -149,12 +152,14 @@ func f64SortRow(data []float64, indChan, sortedArgsChan chan []int, row,
 		indices = append(indices, j)
 	}
 
-	args := argSort(f64Slice(currentRow))
+	args := argSort(sort.Float64Slice(currentRow))
 
 	indChan <- indices
 	sortedArgsChan <- args
 }
 
+// f32SortRow sorts a row of a tensor, where data is the backing slice
+// of the tensor. See sortRow.
 func f32SortRow(data []float32, indChan, sortedArgsChan chan []int, row,
 	outer, oStride, dimSize, dimStride int) {
 	currentRow := make([]float32, 0, dimSize)
@@ -164,12 +169,14 @@ func f32SortRow(data []float32, indChan, sortedArgsChan chan []int, row,
 		indices = append(indices, j)
 	}
 
-	args := argSort(f32Slice(currentRow))
+	args := argSort(float32Slice(currentRow))
 
 	indChan <- indices
 	sortedArgsChan <- args
 }
 
+// intSortRow sorts a row of a tensor, where data is the backing slice
+// of the tensor. See sortRow.
 func intSortRow(data []int, indChan, sortedArgsChan chan []int, row,
 	outer, oStride, dimSize, dimStride int) {
 	currentRow := make([]int, 0, dimSize)
@@ -179,8 +186,20 @@ func intSortRow(data []int, indChan, sortedArgsChan chan []int, row,
 		indices = append(indices, j)
 	}
 
-	args := argSort(intSlice(currentRow))
+	args := argSort(sort.IntSlice(currentRow))
 
 	indChan <- indices
 	sortedArgsChan <- args
 }
+
+// float32Slice is a []float32 wrapper to implement sort.Interface
+type float32Slice []float32
+
+// Len implements the interface sort.Interface
+func (s float32Slice) Len() int { return len(s) }
+
+// Less implements the interface sort.Interface
+func (s float32Slice) Less(i, j int) bool { return s[i] < s[j] }
+
+// Swap implements the interface sort.Interface
+func (s float32Slice) Swap(i, j int) { s[i], s[j] = s[j], s[i] }

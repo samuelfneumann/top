@@ -1,10 +1,39 @@
 package top
 
 import (
+	"fmt"
 	"testing"
 
 	"gorgonia.org/tensor"
 )
+
+func ExampleArgsort() {
+	backing := []float64{1, 5, 0, 3, 9, 8, 4, 6, 7}
+	in := tensor.NewDense(
+		tensor.Float64,
+		[]int{3, 3},
+		tensor.WithBacking(backing),
+	)
+
+	sortedInd, err := Argsort(in, 1)
+	if err != nil {
+		panic(err)
+	}
+
+	fmt.Println("\nInput data:\n", in)
+	fmt.Println("Indices to sort input along axis columns:\n", sortedInd)
+
+	// Output:
+	// Input data:
+	//   ⎡1  5  0⎤
+	//   ⎢3  9  8⎥
+	//   ⎣4  6  7⎦
+
+	// Indices to sort input along axis columns:
+	//   ⎡2  0  1⎤
+	//   ⎢0  2  1⎥
+	//   ⎣0  1  2⎦
+}
 
 func TestArgsort3D(t *testing.T) {
 	backing := []float64{0, 1, 2, 3, 4, 5, 6, 7}
@@ -19,7 +48,10 @@ func TestArgsort3D(t *testing.T) {
 		tensor.WithBacking([]int{0, 0, 0, 0, 1, 1, 1, 1}),
 	)
 
-	sortedInd := Argsort(in, 0)
+	sortedInd, err := Argsort(in, 0)
+	if err != nil {
+		t.Error(err)
+	}
 
 	if !sortedInd.Eq(out) {
 		t.Errorf("expected \n%v \n\nreceived \n%v", out, sortedInd)
@@ -40,7 +72,10 @@ func TestArgsort(t *testing.T) {
 		tensor.WithBacking([]int{2, 0, 1, 0, 2, 1, 0, 1, 2}),
 	)
 
-	sortedInd := Argsort(in, 1)
+	sortedInd, err := Argsort(in, 1)
+	if err != nil {
+		t.Error(err)
+	}
 
 	if !sortedInd.Eq(out) {
 		t.Errorf("expected \n%v \n\nreceived \n%v", out, sortedInd)
@@ -59,7 +94,10 @@ func TestArgsort(t *testing.T) {
 		tensor.WithBacking([]int{2, 0, 1, 0, 2, 1, 0, 1, 2}),
 	)
 
-	f32SortedInd := Argsort(f32In, 1)
+	f32SortedInd, err := Argsort(f32In, 1)
+	if err != nil {
+		t.Error(err)
+	}
 
 	if !f32SortedInd.Eq(f32Out) {
 		t.Errorf("expected \n%v \n\nreceived \n%v", f32Out, f32SortedInd)
@@ -101,7 +139,10 @@ func TestArgsort(t *testing.T) {
 			shapes[i],
 			tensor.WithBacking(intBacking[i]),
 		)
-		intSortedInd := Argsort(intIn, axis[i])
+		intSortedInd, err := Argsort(intIn, axis[i])
+		if err != nil {
+			t.Error(err)
+		}
 
 		if !intSortedInd.Eq(intOut[i]) {
 			t.Errorf("expected \n%v \n\nreceived \n%v", intOut, intSortedInd)
