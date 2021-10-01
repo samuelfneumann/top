@@ -146,6 +146,16 @@ func sortRow(data tensor.Tensor, backingInd, sortedInd chan []int, row,
 	}
 }
 
+// getStaticRowIndices gets the indices for all dimensions other than
+// axis that will be constant along row. For example, row 0 along axis
+// 0 for a tensor of shape (2, 2, 2) will have the indices (0, 0, 0)
+// and (1, 0, 0) in the row. A tensor of shape (3, 4) will have
+// indices (0, 0), (0, 1), (0, 2), (0, 3) along row 0 of axis 1, etc.
+// This function returns a slice of these static indices (the
+// ones that don't change - at the dimensions different from axis)
+// for the argument row. The index for the argument row is left as 0,
+// which will result in the returned value being the index of the
+// first element of row along axis.
 func getStaticRowIndices(data tensor.Tensor, row, axis int) ([]int, error) {
 	shapes := data.Shape()
 	if row > tensor.ProdInts(shapes) {
