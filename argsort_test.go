@@ -45,10 +45,10 @@ func TestArgsort3D(t *testing.T) {
 	out := tensor.NewDense(
 		tensor.Int,
 		[]int{2, 2, 2},
-		tensor.WithBacking([]int{0, 0, 0, 0, 1, 1, 1, 1}),
+		tensor.WithBacking([]int{0, 1, 0, 1, 0, 1, 0, 1}),
 	)
 
-	sortedInd, err := Argsort(in, 0)
+	sortedInd, err := Argsort(in, 2)
 	if err != nil {
 		t.Error(err)
 	}
@@ -60,25 +60,43 @@ func TestArgsort3D(t *testing.T) {
 
 func TestArgsort(t *testing.T) {
 	// float64 Argsort
-	backing := []float64{1, 5, 0, 3, 9, 8, 4, 6, 7}
-	in := tensor.NewDense(
-		tensor.Float64,
-		[]int{3, 3},
-		tensor.WithBacking(backing),
-	)
-	out := tensor.NewDense(
-		tensor.Int,
-		[]int{3, 3},
-		tensor.WithBacking([]int{2, 0, 1, 0, 2, 1, 0, 1, 2}),
-	)
-
-	sortedInd, err := Argsort(in, 1)
-	if err != nil {
-		t.Error(err)
+	inBacking := [][]float64{
+		{1, 5, 0, 3, 9, 8, 4, 6, 7},
+		{1, 5, 0, 3, 9, 8, 4, 6, 7},
+		{0, 1, 2, 3, 4, 5, 6, 7},
 	}
+	outBacking := [][]int{
+		{2, 0, 1, 0, 2, 1, 0, 1, 2},
+		{0, 0, 0, 1, 2, 2, 2, 1, 1},
+		{0, 0, 0, 0, 1, 1, 1, 1},
+	}
+	shapes := [][]int{
+		{3, 3},
+		{3, 3},
+		{2, 4},
+	}
+	axis := []int{1, 0, 0}
 
-	if !sortedInd.Eq(out) {
-		t.Errorf("expected \n%v \n\nreceived \n%v", out, sortedInd)
+	for i := range inBacking {
+		in := tensor.NewDense(
+			tensor.Float64,
+			shapes[i],
+			tensor.WithBacking(inBacking[i]),
+		)
+		out := tensor.NewDense(
+			tensor.Int,
+			shapes[i],
+			tensor.WithBacking(outBacking[i]),
+		)
+
+		sortedInd, err := Argsort(in, axis[i])
+		if err != nil {
+			t.Error(err)
+		}
+
+		if !sortedInd.Eq(out) {
+			t.Errorf("expected \n%v \n\nreceived \n%v", out, sortedInd)
+		}
 	}
 
 	// float32 Argsort
@@ -109,12 +127,12 @@ func TestArgsort(t *testing.T) {
 		{1, 5, 0, 3, 9, 8, 4, 6, 7},
 		{0, 1, 2, 3, 4, 5, 6, 7},
 	}
-	shapes := [][]int{
+	shapes = [][]int{
 		{3, 3},
 		{3, 3},
 		{2, 4},
 	}
-	axis := []int{1, 0, 0}
+	axis = []int{1, 0, 0}
 	intOut := []*tensor.Dense{
 		tensor.NewDense(
 			tensor.Int,

@@ -10,47 +10,24 @@ import (
 // Argsort returns an int tensor containing indices that would sort
 // t along axis.
 func Argsort(t tensor.Tensor, axis int) (tensor.Tensor, error) {
-	shape := t.Shape()
-	dimSize := shape[axis]
-
-	// Outer is the number of elements to step to get to the next row
-	// along the argument axis
-	outer := tensor.ProdInts([]int(shape[:axis]))
-	if outer == 0 {
-		outer = 1
-	}
-
-	// The number of elements between consecutive elements along the
-	// argument axis
-	inner := tensor.ProdInts([]int(shape[axis+1:]))
-	if inner == 0 {
-		inner = 1
-	}
-	dimStride := inner
-
-	// oStride is such that slice[row:row+oStride] will contain all
-	// the elements of the current row
-	oStride := dimSize * dimStride
-
-	dataLen := shape.TotalSize()
-	data := t.Data()
-
 	// Sort each row concurrently passing back a slice of indices that
 	// would sort the input tensor along the row, along with the indices
 	// at which these values should be set for the backing data of
 	// the argsort'd tensor
-	sortedArgsChan := make(chan []int, outer*inner)
-	indChan := make(chan []int, outer*inner)
-	errors := make(chan error, outer*inner)
-	for i := 0; i < outer*inner; i++ {
+	shape := make([]int, len(t.Shape()))
+	copy(shape, t.Shape())
+	reps := tensor.ProdInts(append(shape[:axis], shape[axis+1:]...))
+	sortedArgsChan := make(chan []int, reps)
+	indChan := make(chan []int, reps)
+	errors := make(chan error, reps)
+	for i := 0; i < reps; i++ {
 		row := i // Since i may change before the goroutine needs it
-		go sortRow(data, indChan, sortedArgsChan, row, outer, oStride,
-			dimSize, dimStride, errors)
+		go sortRow(t, indChan, sortedArgsChan, row, axis, errors)
 	}
 
 	// Set each row based on the concurrent argsorts
-	sorted := make([]int, dataLen) // Backing for argsort'd tensor
-	for k := 0; k < inner*outer; k++ {
+	sorted := make([]int, t.Size()) // Backing for argsort'd tensor
+	for k := 0; k < reps; k++ {
 		indices := <-indChan     // Indices to set in the backing slice
 		args := <-sortedArgsChan // Sorted indices of the input slice
 		err := <-errors          // Errors during sorting
@@ -69,7 +46,7 @@ func Argsort(t tensor.Tensor, axis int) (tensor.Tensor, error) {
 	// Construct and returns the argsort'd tensor
 	indices := tensor.NewDense(
 		tensor.Int,
-		shape,
+		t.Shape(),
 		tensor.WithBacking(sorted),
 	)
 	return indices, nil
@@ -119,77 +96,231 @@ func argSort(s sort.Interface) []int {
 // in the backing slice of the argsort'd tensor along indChan, and
 // the arguments that sort the tensor along sortedArgsChan. Any errors
 // during the computation are sent along errors.
-func sortRow(data interface{}, indChan, sortedArgsChan chan []int, row,
-	outer, oStride, dimSize, dimStride int, errors chan error) {
-	switch d := data.(type) {
+//
+// The parameter row indicates which row should be sorted along axis.
+// For example, if we want to access the first row along axis 0
+// for a tensor of size (2, 2, 2), then these indices will be
+// (0, 0, 0), (1, 0, 0). The parameter row actually refers to
+// (x, 0, 0) in this case, where x ∈ {0, 1}.
+func sortRow(data tensor.Tensor, indChan, sortedArgsChan chan []int, row,
+	axis int, errors chan error) {
+	switch data.Data().(type) {
 	case []float64:
-		f64SortRow(d, indChan, sortedArgsChan, row, outer, oStride,
-			dimSize, dimStride)
+		f64SortRow(data, indChan, sortedArgsChan, row, axis, errors)
 
 	case []float32:
-		f32SortRow(d, indChan, sortedArgsChan, row, outer, oStride,
-			dimSize, dimStride)
+		f32SortRow(data, indChan, sortedArgsChan, row, axis, errors)
 
 	case []int:
-		intSortRow(d, indChan, sortedArgsChan, row, outer, oStride,
-			dimSize, dimStride)
+		intSortRow(data, indChan, sortedArgsChan, row, axis, errors)
 
 	default:
 		errors <- fmt.Errorf("sortRow: type %T not supported", data)
 	}
+}
 
-	errors <- nil
+func getStaticRowIndices(data tensor.Tensor, row, axis int) ([]int, error) {
+	shapes := data.Shape()
+	if row > tensor.ProdInts(shapes) {
+		return nil, fmt.Errorf("getStaticRowIndices: index out of range [%v] "+
+			"for row length %v", row, tensor.ProdInts(shapes))
+	}
+	static := make([]int, len(data.Shape()))
+	current := 0
+	for i := 0; i < row; i++ {
+		if current == axis {
+			// Go to next dimension
+			current = (current + 1) % len(shapes)
+		}
+		static[current]++
+
+		for static[current] == shapes[current] {
+			static[current] = 0
+			current = (current + 1) % len(shapes)
+			if current == axis {
+				current = (current + 1) % len(shapes)
+			}
+			static[current]++
+		}
+		current = 0
+	}
+	return static, nil
 }
 
 // f64SortRow sorts a row of a tensor, where data is the backing slice
 // of the tensor. See sortRow.
-func f64SortRow(data []float64, indChan, sortedArgsChan chan []int, row,
-	outer, oStride, dimSize, dimStride int) {
+func f64SortRow(data tensor.Tensor, indChan, sortedArgsChan chan []int, row,
+	axis int, errors chan error) {
+	// Get the indices for the row along the dimensions different from the
+	// sorted axis. These will be static indices for the row, and only
+	// the indices along axis will change.
+	//
+	// For example, if we want to access the first row along axis 0
+	// for a tensor of size (2, 2, 2), then these indices will be
+	// (0, 0, 0), (1, 0, 0). The parameter row actually refers to
+	// (x, 0, 0) in this case, where x ∈ {0, 1}.
+	static, err := getStaticRowIndices(data, row, axis)
+	if err != nil {
+		errors <- fmt.Errorf("f64SortRow: %v", err)
+
+		indChan <- nil
+		sortedArgsChan <- nil
+		return
+	}
+
+	dimSize := data.Shape()[axis]
 	currentRow := make([]float64, 0, dimSize)
 	indices := make([]int, 0, dimSize)
-	for j := row * outer; j < row*outer+oStride; j += dimStride {
-		currentRow = append(currentRow, data[j])
+	for i := 0; i < dimSize; i++ {
+		// Set the index of the next element along the current axis
+		static[axis] = i
+		// Get the index into the backing slice of the tensor
+		j, err := tensor.Ltoi(data.Shape(), data.Strides(), static...)
+		if err != nil {
+			errors <- fmt.Errorf("f64SortRow: could not compute index "+
+				"of coordinates %v into backing slice", static)
+
+			indChan <- nil
+			sortedArgsChan <- nil
+			return
+		}
+
+		// Construct the current row and store which axis in the
+		// backing slice this element is at. This index will be
+		// needed to reconstruct the argsort'd row in the
+		// final argsort'd tensor.
+		currentRow = append(currentRow, data.Data().([]float64)[j])
 		indices = append(indices, j)
 	}
 
+	// Argsort this row only. These argsort'd indices will be placed at
+	// indices (variable above) in the backing slice of the final tensor
 	args := argSort(sort.Float64Slice(currentRow))
 
-	indChan <- indices
+	// Send the argsort'd indices, along with the indices at which to
+	// place them in the backing slice of the final tensor to the
+	// main goroutine.
 	sortedArgsChan <- args
+	indChan <- indices
+	errors <- nil
 }
 
 // f32SortRow sorts a row of a tensor, where data is the backing slice
 // of the tensor. See sortRow.
-func f32SortRow(data []float32, indChan, sortedArgsChan chan []int, row,
-	outer, oStride, dimSize, dimStride int) {
+func f32SortRow(data tensor.Tensor, indChan, sortedArgsChan chan []int, row,
+	axis int, errors chan error) {
+	// Get the indices for the row along the dimensions different from the
+	// sorted axis. These will be static indices for the row, and only
+	// the indices along axis will change.
+	//
+	// For example, if we want to access the first row along axis 0
+	// for a tensor of size (2, 2, 2), then these indices will be
+	// (0, 0, 0), (1, 0, 0). The parameter row actually refers to
+	// (x, 0, 0) in this case, where x ∈ {0, 1}.
+	static, err := getStaticRowIndices(data, row, axis)
+	if err != nil {
+		errors <- fmt.Errorf("f32SortRow: %v", err)
+
+		indChan <- nil
+		sortedArgsChan <- nil
+		return
+	}
+
+	dimSize := data.Shape()[axis]
 	currentRow := make([]float32, 0, dimSize)
 	indices := make([]int, 0, dimSize)
-	for j := row * outer; j < row*outer+oStride; j += dimStride {
-		currentRow = append(currentRow, data[j])
+	for i := 0; i < dimSize; i++ {
+		// Set the index of the next element along the current axis
+		static[axis] = i
+
+		// Get the index into the backing slice of the tensor
+		j, err := tensor.Ltoi(data.Shape(), data.Strides(), static...)
+		if err != nil {
+			errors <- fmt.Errorf("f32SortRow: could not compute index "+
+				"of coordinates %v into backing slice", static)
+
+			indChan <- nil
+			sortedArgsChan <- nil
+			return
+		}
+
+		// Construct the current row and store which axis in the
+		// backing slice this element is at. This index will be
+		// needed to reconstruct the argsort'd row in the
+		// final argsort'd tensor.
+		currentRow = append(currentRow, data.Data().([]float32)[j])
 		indices = append(indices, j)
 	}
 
+	// Argsort this row only. These argsort'd indices will be placed at
+	// indices (variable above) in the backing slice of the final tensor
 	args := argSort(float32Slice(currentRow))
 
-	indChan <- indices
+	// Send the argsort'd indices, along with the indices at which to
+	// place them in the backing slice of the final tensor to the
+	// main goroutine.
 	sortedArgsChan <- args
+	indChan <- indices
+	errors <- nil
 }
 
 // intSortRow sorts a row of a tensor, where data is the backing slice
 // of the tensor. See sortRow.
-func intSortRow(data []int, indChan, sortedArgsChan chan []int, row,
-	outer, oStride, dimSize, dimStride int) {
+func intSortRow(data tensor.Tensor, indChan, sortedArgsChan chan []int, row,
+	axis int, errors chan error) {
+	// Get the indices for the row along the dimensions different from the
+	// sorted axis. These will be static indices for the row, and only
+	// the indices along axis will change.
+	//
+	// For example, if we want to access the first row along axis 0
+	// for a tensor of size (2, 2, 2), then these indices will be
+	// (0, 0, 0), (1, 0, 0). The parameter row actually refers to
+	// (x, 0, 0) in this case, where x ∈ {0, 1}.
+	static, err := getStaticRowIndices(data, row, axis)
+	if err != nil {
+		errors <- fmt.Errorf("intSortRow: %v", err)
+
+		indChan <- nil
+		sortedArgsChan <- nil
+		return
+	}
+
+	dimSize := data.Shape()[axis]
 	currentRow := make([]int, 0, dimSize)
 	indices := make([]int, 0, dimSize)
-	for j := row * outer; j < row*outer+oStride; j += dimStride {
-		currentRow = append(currentRow, data[j])
+	for i := 0; i < dimSize; i++ {
+		// Set the index of the next element along the current axis
+		static[axis] = i
+
+		// Get the index into the backing slice of the tensor
+		j, err := tensor.Ltoi(data.Shape(), data.Strides(), static...)
+		if err != nil {
+			errors <- fmt.Errorf("intSortRow: could not compute index "+
+				"of coordinates %v into backing slice", static)
+
+			indChan <- nil
+			sortedArgsChan <- nil
+			return
+		}
+
+		// Construct the current row and store which axis in the
+		// backing slice this element is at. This index will be
+		// needed to reconstruct the argsort'd row in the
+		// final argsort'd tensor.
+		currentRow = append(currentRow, data.Data().([]int)[j])
 		indices = append(indices, j)
 	}
 
+	// Argsort this row only. These argsort'd indices will be placed at
+	// indices (variable above) in the backing slice of the final tensor
 	args := argSort(sort.IntSlice(currentRow))
 
-	indChan <- indices
+	// Send the argsort'd indices, along with the indices at which to
+	// place them in the backing slice of the final tensor to the
+	// main goroutine.
 	sortedArgsChan <- args
+	indChan <- indices
+	errors <- nil
 }
 
 // float32Slice is a []float32 wrapper to implement sort.Interface
