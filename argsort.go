@@ -10,27 +10,41 @@ import (
 // Argsort returns an int tensor containing indices that would sort
 // t along axis.
 func Argsort(t tensor.Tensor, axis int) (tensor.Tensor, error) {
+	shape := make([]int, len(t.Shape()))
+	copy(shape, t.Shape())
+	reps := tensor.ProdInts(append(shape[:axis], shape[axis+1:]...))
+
+	// sortedInd is the channel along which the argsort'd indices for a
+	// specific row will be sent
+	sortedInd := make(chan []int, reps)
+
+	// backingInd is the channel along which the indices in the
+	// backing slice of the final tensor at which data from
+	// sortedInd should be placed is sent. That is, if `b` is sent along
+	// backingInd and `s` along sortedInd, then `s[i]` should be placed
+	// at index `b[i]` in the backing data of the final, argsort'd
+	// tensor
+	backingInd := make(chan []int, reps)
+
+	// errors is the channel along which any errors in concurrent
+	// argsort'ng are sent
+	errors := make(chan error, reps)
+
 	// Sort each row concurrently passing back a slice of indices that
 	// would sort the input tensor along the row, along with the indices
 	// at which these values should be set for the backing data of
 	// the argsort'd tensor
-	shape := make([]int, len(t.Shape()))
-	copy(shape, t.Shape())
-	reps := tensor.ProdInts(append(shape[:axis], shape[axis+1:]...))
-	sortedArgsChan := make(chan []int, reps)
-	indChan := make(chan []int, reps)
-	errors := make(chan error, reps)
 	for i := 0; i < reps; i++ {
 		row := i // Since i may change before the goroutine needs it
-		go sortRow(t, indChan, sortedArgsChan, row, axis, errors)
+		go sortRow(t, backingInd, sortedInd, row, axis, errors)
 	}
 
 	// Set each row based on the concurrent argsorts
 	sorted := make([]int, t.Size()) // Backing for argsort'd tensor
 	for k := 0; k < reps; k++ {
-		indices := <-indChan     // Indices to set in the backing slice
-		args := <-sortedArgsChan // Sorted indices of the input slice
-		err := <-errors          // Errors during sorting
+		indices := <-backingInd // Indices to set in the backing slice
+		args := <-sortedInd     // Sorted indices of the input slice
+		err := <-errors         // Errors during sorting
 		if err != nil {
 			return nil, fmt.Errorf("argsort: %v", err)
 		}
@@ -39,8 +53,8 @@ func Argsort(t tensor.Tensor, axis int) (tensor.Tensor, error) {
 			sorted[indices[i]] = args[i]
 		}
 	}
-	close(indChan)
-	close(sortedArgsChan)
+	close(backingInd)
+	close(sortedInd)
 	close(errors)
 
 	// Construct and returns the argsort'd tensor
@@ -93,8 +107,8 @@ func argSort(s sort.Interface) []int {
 }
 
 // sortRow sorts as specific row of data, sending the indices to update
-// in the backing slice of the argsort'd tensor along indChan, and
-// the arguments that sort the tensor along sortedArgsChan. Any errors
+// in the backing slice of the argsort'd tensor along backingInd, and
+// the arguments that sort the tensor along sortedInd. Any errors
 // during the computation are sent along errors.
 //
 // The parameter row indicates which row should be sorted along axis.
@@ -102,17 +116,17 @@ func argSort(s sort.Interface) []int {
 // for a tensor of size (2, 2, 2), then these indices will be
 // (0, 0, 0), (1, 0, 0). The parameter row actually refers to
 // (x, 0, 0) in this case, where x ∈ {0, 1}.
-func sortRow(data tensor.Tensor, indChan, sortedArgsChan chan []int, row,
+func sortRow(data tensor.Tensor, backingInd, sortedInd chan []int, row,
 	axis int, errors chan error) {
 	switch data.Data().(type) {
 	case []float64:
-		f64SortRow(data, indChan, sortedArgsChan, row, axis, errors)
+		f64SortRow(data, backingInd, sortedInd, row, axis, errors)
 
 	case []float32:
-		f32SortRow(data, indChan, sortedArgsChan, row, axis, errors)
+		f32SortRow(data, backingInd, sortedInd, row, axis, errors)
 
 	case []int:
-		intSortRow(data, indChan, sortedArgsChan, row, axis, errors)
+		intSortRow(data, backingInd, sortedInd, row, axis, errors)
 
 	default:
 		errors <- fmt.Errorf("sortRow: type %T not supported", data)
@@ -149,7 +163,7 @@ func getStaticRowIndices(data tensor.Tensor, row, axis int) ([]int, error) {
 
 // f64SortRow sorts a row of a tensor, where data is the backing slice
 // of the tensor. See sortRow.
-func f64SortRow(data tensor.Tensor, indChan, sortedArgsChan chan []int, row,
+func f64SortRow(data tensor.Tensor, backingInd, sortedInd chan []int, row,
 	axis int, errors chan error) {
 	// Get the indices for the row along the dimensions different from the
 	// sorted axis. These will be static indices for the row, and only
@@ -163,8 +177,8 @@ func f64SortRow(data tensor.Tensor, indChan, sortedArgsChan chan []int, row,
 	if err != nil {
 		errors <- fmt.Errorf("f64SortRow: %v", err)
 
-		indChan <- nil
-		sortedArgsChan <- nil
+		backingInd <- nil
+		sortedInd <- nil
 		return
 	}
 
@@ -180,8 +194,8 @@ func f64SortRow(data tensor.Tensor, indChan, sortedArgsChan chan []int, row,
 			errors <- fmt.Errorf("f64SortRow: could not compute index "+
 				"of coordinates %v into backing slice", static)
 
-			indChan <- nil
-			sortedArgsChan <- nil
+			backingInd <- nil
+			sortedInd <- nil
 			return
 		}
 
@@ -200,14 +214,14 @@ func f64SortRow(data tensor.Tensor, indChan, sortedArgsChan chan []int, row,
 	// Send the argsort'd indices, along with the indices at which to
 	// place them in the backing slice of the final tensor to the
 	// main goroutine.
-	sortedArgsChan <- args
-	indChan <- indices
+	sortedInd <- args
+	backingInd <- indices
 	errors <- nil
 }
 
 // f32SortRow sorts a row of a tensor, where data is the backing slice
 // of the tensor. See sortRow.
-func f32SortRow(data tensor.Tensor, indChan, sortedArgsChan chan []int, row,
+func f32SortRow(data tensor.Tensor, backingInd, sortedInd chan []int, row,
 	axis int, errors chan error) {
 	// Get the indices for the row along the dimensions different from the
 	// sorted axis. These will be static indices for the row, and only
@@ -221,8 +235,8 @@ func f32SortRow(data tensor.Tensor, indChan, sortedArgsChan chan []int, row,
 	if err != nil {
 		errors <- fmt.Errorf("f32SortRow: %v", err)
 
-		indChan <- nil
-		sortedArgsChan <- nil
+		backingInd <- nil
+		sortedInd <- nil
 		return
 	}
 
@@ -239,8 +253,8 @@ func f32SortRow(data tensor.Tensor, indChan, sortedArgsChan chan []int, row,
 			errors <- fmt.Errorf("f32SortRow: could not compute index "+
 				"of coordinates %v into backing slice", static)
 
-			indChan <- nil
-			sortedArgsChan <- nil
+			backingInd <- nil
+			sortedInd <- nil
 			return
 		}
 
@@ -259,14 +273,14 @@ func f32SortRow(data tensor.Tensor, indChan, sortedArgsChan chan []int, row,
 	// Send the argsort'd indices, along with the indices at which to
 	// place them in the backing slice of the final tensor to the
 	// main goroutine.
-	sortedArgsChan <- args
-	indChan <- indices
+	sortedInd <- args
+	backingInd <- indices
 	errors <- nil
 }
 
 // intSortRow sorts a row of a tensor, where data is the backing slice
 // of the tensor. See sortRow.
-func intSortRow(data tensor.Tensor, indChan, sortedArgsChan chan []int, row,
+func intSortRow(data tensor.Tensor, backingInd, sortedInd chan []int, row,
 	axis int, errors chan error) {
 	// Get the indices for the row along the dimensions different from the
 	// sorted axis. These will be static indices for the row, and only
@@ -280,8 +294,8 @@ func intSortRow(data tensor.Tensor, indChan, sortedArgsChan chan []int, row,
 	if err != nil {
 		errors <- fmt.Errorf("intSortRow: %v", err)
 
-		indChan <- nil
-		sortedArgsChan <- nil
+		backingInd <- nil
+		sortedInd <- nil
 		return
 	}
 
@@ -298,8 +312,8 @@ func intSortRow(data tensor.Tensor, indChan, sortedArgsChan chan []int, row,
 			errors <- fmt.Errorf("intSortRow: could not compute index "+
 				"of coordinates %v into backing slice", static)
 
-			indChan <- nil
-			sortedArgsChan <- nil
+			backingInd <- nil
+			sortedInd <- nil
 			return
 		}
 
@@ -318,8 +332,8 @@ func intSortRow(data tensor.Tensor, indChan, sortedArgsChan chan []int, row,
 	// Send the argsort'd indices, along with the indices at which to
 	// place them in the backing slice of the final tensor to the
 	// main goroutine.
-	sortedArgsChan <- args
-	indChan <- indices
+	sortedInd <- args
+	backingInd <- indices
 	errors <- nil
 }
 
