@@ -10,6 +10,14 @@ import (
 // Argsort returns an int tensor containing indices that would sort
 // t along axis.
 func Argsort(t tensor.Tensor, axis int) (tensor.Tensor, error) {
+	// Ensure valid data type of tensor
+	switch t.Data().(type) {
+	case []float64, []float32, []int:
+
+	default:
+		return nil, fmt.Errorf("argsort: unknown tensor type %v", t.Dtype())
+	}
+
 	shape := make([]int, len(t.Shape()))
 	copy(shape, t.Shape())
 	reps := tensor.ProdInts(append(shape[:axis], shape[axis+1:]...))
@@ -129,7 +137,7 @@ func sortRow(data tensor.Tensor, backingInd, sortedInd chan []int, row,
 		intSortRow(data, backingInd, sortedInd, row, axis, errors)
 
 	default:
-		errors <- fmt.Errorf("sortRow: type %T not supported", data)
+		errors <- fmt.Errorf("sortRow: unknown tensor type %v", data.Dtype())
 	}
 }
 
