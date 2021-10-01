@@ -18,6 +18,11 @@ func Argsort(t tensor.Tensor, axis int) (tensor.Tensor, error) {
 		return nil, fmt.Errorf("argsort: unknown tensor type %v", t.Dtype())
 	}
 
+	if axis >= len(t.Shape()) {
+		return nil, fmt.Errorf("argsort: axis out of range [%v] for "+
+			"tensor with %v dimensions", axis, len(t.Shape()))
+	}
+
 	shape := make([]int, len(t.Shape()))
 	copy(shape, t.Shape())
 	reps := tensor.ProdInts(append(shape[:axis], shape[axis+1:]...))

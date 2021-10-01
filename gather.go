@@ -43,6 +43,11 @@ func Gather(t tensor.Tensor, axis int, indices tensor.Tensor) (tensor.Tensor,
 			len(indices.Shape()), len(t.Shape()))
 	}
 
+	if axis >= len(indices.Shape()) {
+		return nil, fmt.Errorf("gather: axis out of range [%v] for "+
+			"tensor with %v dimensions", axis, len(indices.Shape()))
+	}
+
 	switch t.Dtype() {
 	case tensor.Float64:
 		return gatherF64(t, axis, indices)
