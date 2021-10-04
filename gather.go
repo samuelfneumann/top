@@ -156,7 +156,7 @@ func gatherF32(t tensor.Tensor, axis int,
 // gatherInt gathers elements from any int tensor. The tensor may have
 // any integer type backing data (e.g. uint, uint32, int64, ...), but
 // the resulting tensor will always have backing type int (other integer
-// types will be cast to in) See Gather for more details.
+// types will be cast to int) See Gather for more details.
 func gatherInt(t tensor.Tensor, axis int,
 	indices tensor.Tensor) (tensor.Tensor, error) {
 	// Backing data
@@ -203,33 +203,4 @@ func gatherInt(t tensor.Tensor, axis int,
 		indices.Shape(),
 		tensor.WithBacking(output),
 	), nil
-}
-
-// anyIntToInt converts any integer type to int
-func anyIntToInt(integer interface{}) (int, error) {
-	switch i := integer.(type) {
-	case int:
-		return i, nil
-	case uint:
-		return int(i), nil
-	case uint8:
-		return int(i), nil
-	case uint16:
-		return int(i), nil
-	case uint32:
-		return int(i), nil
-	case uint64:
-		return int(i), nil
-	case int8:
-		return int(i), nil
-	case int16:
-		return int(i), nil
-	case int32:
-		return int(i), nil
-	case int64:
-		return int(i), nil
-	default:
-		return 0, fmt.Errorf("anyIntToInt: input type %T is not an integer "+
-			"type", integer)
-	}
 }
