@@ -13,6 +13,12 @@ on an integer tensor is a tensor that holds `int` values, regardless
 of whether the input held a different integer type. For example, if
 `Gather()` is run on a tensor of type `tensor.Uint8`, this module will
 return a tensor of type `tensor.Int`. This should be okay, because in
-most cases a `tensor.Int` should be used anyway. Once `Go` incorporates
-generics, this module will be updated to deal with all numeric types
-appropriately.
+most cases a `tensor.Int` should be used anyway. Because of this
+implementation detail, take care when working on a 32-bit machine.
+Tensors of type `int64` will be converted to `int32` (the definition
+of `int` on a 32-bit machine is `int32`), which can result in
+truncation and incorrect results. Use `int` whenever possible when
+working on a 32-bit machine.
+
+Once `Go` incorporates generics, this module will be updated to deal
+with all numeric types appropriately.
