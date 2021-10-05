@@ -8,8 +8,8 @@ import (
 
 // ClampB is the backward pass of Clamp. This function works for tensors
 // storing float64, float32, or any integer data type. If an integer
-// data type is used, the result will be an int tensor regardless of
-// the input integer type.
+// data type is used, the result will be a tensor of type tensor.Int
+// regardless of the input integer type.
 func ClampB(in tensor.Tensor, min, max interface{}) (tensor.Tensor, error) {
 	switch in.Dtype() {
 	case tensor.Float64:
@@ -58,6 +58,8 @@ func ClampB(in tensor.Tensor, min, max interface{}) (tensor.Tensor, error) {
 
 }
 
+// f64ClampB performs the backward propagation of the clamp operation
+// on a tensor of type tensor.Float64
 func f64ClampB(in tensor.Tensor, min, max float64) (tensor.Tensor, error) {
 	out := in.Clone().(tensor.Tensor)
 
@@ -87,6 +89,8 @@ func f64ClampB(in tensor.Tensor, min, max float64) (tensor.Tensor, error) {
 	return out, nil
 }
 
+// f32ClampB performs the backward propagation of the clamp operation
+// on a tensor of type tensor.Float32
 func f32ClampB(in tensor.Tensor, min, max float32) (tensor.Tensor, error) {
 	out := in.Clone().(tensor.Tensor)
 
@@ -116,6 +120,9 @@ func f32ClampB(in tensor.Tensor, min, max float32) (tensor.Tensor, error) {
 	return out, nil
 }
 
+// intClampB performs the backpropagation of the clamp operation on
+// a tensor of any integer type. Regardless of the input type, the
+// output tensor has type tensor.Int.
 func intClampB(in tensor.Tensor, min, max int) (tensor.Tensor, error) {
 	out := tensor.NewDense(tensor.Int, in.Shape())
 

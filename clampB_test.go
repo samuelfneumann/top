@@ -8,6 +8,7 @@ import (
 	"gorgonia.org/tensor"
 )
 
+// TestF64ClampB tests the ClampB function on tensors of type float64
 func TestF64ClampB(t *testing.T) {
 	const numTests int = 15     // The number of random tests to run
 	const clipScale float64 = 2 // Legal ranges generated based on clipScale
@@ -64,6 +65,7 @@ func TestF64ClampB(t *testing.T) {
 	}
 }
 
+// TestF32ClampB tests the ClampB function on tensors of type float32
 func TestF32ClampB(t *testing.T) {
 	const numTests int = 15     // The number of random tests to run
 	const clipScale float32 = 2 // Legal ranges generated based on clipScale
@@ -120,6 +122,7 @@ func TestF32ClampB(t *testing.T) {
 	}
 }
 
+// TestIntClampB tests the ClampB function on tensors of type int
 func TestIntClampB(t *testing.T) {
 	const numTests int = 15  // The number of random tests to run
 	const clipScale int = 10 // Legal ranges generated based on clipScale
