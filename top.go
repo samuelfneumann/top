@@ -25,6 +25,7 @@ func init() {
 	if !flag {
 		fmt.Fprintf(os.Stderr,
 			colour.Red+"WARNING: using 32-bit precision, use caution when "+
-				"using top with int64 values which may be cast to int (int32)")
+				"using top with int64 values which may be cast to int "+
+				"(int32)"+colour.Reset)
 	}
 }
