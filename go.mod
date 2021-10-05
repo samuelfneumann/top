@@ -2,7 +2,10 @@ module github.com/samuelfneumann/top
 
 go 1.17
 
-require gorgonia.org/tensor v0.9.21
+require (
+	github.com/samuelfneumann/gocolour v1.0.1-0.20211005211147-c025647b4563
+	gorgonia.org/tensor v0.9.21
+)
 
 require (
 	github.com/apache/arrow/go/arrow v0.0.0-20201229220542-30ce2eb5d4dc // indirect

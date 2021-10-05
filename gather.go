@@ -11,15 +11,22 @@ import (
 // and must have any integer (e.g. int, uint, in16, ...) backing data.
 //
 // For a 3D tensor, the output is specified by:
-// ```
-// out[i][j][k] = input[index[i][j][k]][j][k]  # if dim == 0
-// out[i][j][k] = input[i][index[i][j][k]][k]  # if dim == 1
-// out[i][j][k] = input[i][j][index[i][j][k]]  # if dim == 2
-// ````
 //
-// Gather works on tensors of type float64, float32, and any int type.
+//		out[i][j][k] = input[index[i][j][k]][j][k]  # if dim == 0
+//		out[i][j][k] = input[i][index[i][j][k]][k]  # if dim == 1
+//		out[i][j][k] = input[i][j][index[i][j][k]]  # if dim == 2
+//
+//
+// Gather works on tensors t of type float64, float32, or any int type.
 // If the backing data of a tensor is an int type (e.g. uint32), it
-// will be converted to an int in the resulting tensor.
+// will be converted to an int in the returned tensor.
+//
+// The indices tensor must store an integer type.
+// Regardless of the integer type stored in the indices tensor, this
+// function will convert that integer type to an int before computing
+// the gather function. If using a 32-bit machine, use caution
+// if the data type stored by the indices tensor is int64, as this
+// may result in trucation or numerical issues.
 //
 // This implementation is heavily based on the PyTorch implementation.
 // See PyTorch's documentation for more details and usage:
@@ -39,10 +46,24 @@ func Gather(t tensor.Tensor, axis int, indices tensor.Tensor) (tensor.Tensor,
 	// Ensure indices and t have same number of dimensions
 	if len(t.Shape()) != len(indices.Shape()) {
 		return nil, fmt.Errorf("gather: indices and t tensors must have "+
-			"the same number of dimensions but got indices(%v) and t(%v)",
+			"the same number of dimensions but got indices=(%v) and t=(%v)",
 			len(indices.Shape()), len(t.Shape()))
 	}
 
+	// Ensure all dimension are legal
+	for i := range t.Shape() {
+		if i == axis {
+			continue
+		}
+		if t.Shape()[i] < indices.Shape()[i] {
+			return nil, fmt.Errorf("gather: size does not match at "+
+				"dimension %v expected indices shape %v to be smaller "+
+				"than t shape %v apart from dimension %v", i, indices.Shape(),
+				t.Shape(), axis)
+		}
+	}
+
+	// Ensure the axis is legal
 	if axis >= len(indices.Shape()) {
 		return nil, fmt.Errorf("gather: axis out of range [%v] for "+
 			"tensor with %v dimensions", axis, len(indices.Shape()))
