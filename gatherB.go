@@ -7,15 +7,13 @@ import (
 )
 
 // GatherB is the backpropagation of Gather. The input tensor t must
-// store either float64's or float32's since it is not possible to
-// take a gradient over the integers. The indices tensor must store
-// any integer type.
+// store either float64's, float32's, or any integer type.
 //
-// Regardless of the integer type stored in the indices tensor, this
+// Regardless of the integer type stored in the input tensors, this
 // function will convert that integer type to an int before computing
 // the gather backpropagation. If using a 32-bit machine, use caution
-// if the data type stored by the indices tensor is int64, as this
-// may result in trucation or numerical issues.
+// if the data type stored by the input tensors is int64, as this
+// may result in trucation or numerical issues when casting to int.
 func GatherB(t tensor.Tensor, axis int, indices tensor.Tensor) (tensor.Tensor,
 	error) {
 	// Ensure indices is a tensor of int
@@ -60,6 +58,10 @@ func GatherB(t tensor.Tensor, axis int, indices tensor.Tensor) (tensor.Tensor,
 
 	case tensor.Float32:
 		return gatherBF32(t, axis, indices)
+
+	case tensor.Int, tensor.Int8, tensor.Int16, tensor.Int32, tensor.Int64,
+		tensor.Uint, tensor.Uint8, tensor.Uint16, tensor.Uint32, tensor.Uint64:
+		return gatherBInt(t, axis, indices)
 
 	default:
 		return nil, fmt.Errorf("gather: cannot gather on tensor of type %v",
@@ -137,7 +139,47 @@ func gatherBF32(t tensor.Tensor, axis int,
 		}
 		coords[axis] = intIndex
 
-		err = output.SetAt(1.0, coords...)
+		err = output.SetAt(float32(1.0), coords...)
+		if err != nil {
+			return nil, fmt.Errorf("gatherB: could not set element at index %v",
+				ijk)
+		}
+	}
+
+	return output, nil
+}
+
+func gatherBInt(t tensor.Tensor, axis int,
+	indices tensor.Tensor) (tensor.Tensor, error) {
+	// Backing data
+	output := tensor.NewDense(
+		tensor.Int,
+		t.Shape(),
+	)
+
+	// Loop through each index in indices
+	for i := 0; i < indices.Size(); i++ {
+		ijk, err := tensor.Itol(i, indices.Shape(), indices.Strides())
+		if err != nil {
+			panic(err)
+		}
+
+		coords := make([]int, len(ijk))
+		copy(coords, ijk)
+		index, err := indices.At(ijk...)
+		if err != nil {
+			panic(err)
+		}
+
+		// Convert any int type to int
+		intIndex, err := anyIntToInt(index)
+		if err != nil {
+			return nil, fmt.Errorf("gather: could not get index from indices "+
+				"at coordinates %v: %v", coords, err)
+		}
+		coords[axis] = intIndex
+
+		err = output.SetAt(1, coords...)
 		if err != nil {
 			return nil, fmt.Errorf("gatherB: could not set element at index %v",
 				ijk)
